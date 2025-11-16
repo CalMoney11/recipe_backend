@@ -10,8 +10,6 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 from analyzer import IngredientAnalyzer
-from i_to_rec3 import load_recipes_from_kaggle, find_valid_recipes
-
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
@@ -72,8 +70,7 @@ def analyze():
 @app.route('/get_recipes', methods=['POST'])
 def get_recipes():
     """
-    Get recipes based on stored ingredients list.
-    Calls the recipe generation function from i-to-rec3.py
+    Get recipes based on stored ingredients list by asking Gemini to generate them.
     """
     try:
         # Get the stored ingredients from the analyzer
@@ -82,39 +79,21 @@ def get_recipes():
         if not ingredients:
             return jsonify({"success": False, "error": "No ingredients found. Please analyze ingredients first."}), 400
         
-        # Load recipes from Kaggle
-        print("Loading recipes from Kaggle...")
-        df = load_recipes_from_kaggle()
+        print(f"Generating recipes using {len(ingredients)} ingredients...")
         
-        # Find valid recipes based on ingredients
-        print(f"Finding recipes matching {len(ingredients)} ingredients...")
-        valid_recipes = find_valid_recipes(df, ingredients)
-        
-        if not valid_recipes:
-            return jsonify({
-                "success": True,
-                "ingredients": ingredients,
-                "recipes": [],
-                "total_found": 0,
-                "message": "No recipes found matching your ingredients."
-            })
-        
-        print(f"Found {len(valid_recipes)} matching recipes. Filtering to top 5...")
-        
-        # Use Gemini to filter top 5 recipes
-        top_recipes = analyzer.filter_top_recipes(ingredients, valid_recipes, top_n=5)
+        # NEW: Call the Gemini generation method
+        generated_recipes = analyzer.generate_recipes(ingredients, num_recipes=5)
         
         return jsonify({
             "success": True,
             "ingredients": ingredients,
-            "recipes": top_recipes,
-            "total_found": len(valid_recipes)
+            "recipes": generated_recipes,
+            "total_found": len(generated_recipes) # Report how many were generated
         })
         
     except Exception as e:
         print(f"Error in get_recipes: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
-
 
 @app.route('/health', methods=['GET'])
 def health():

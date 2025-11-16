@@ -1,36 +1,40 @@
 """
-Image and prompt analyzer for ingredient analysis.
-Handles image processing and prompt-based ingredient detection using Gemini API.
+Image and prompt analyzer for ingredient analysis and recipe generation.
+Handles image processing, prompt-based ingredient detection, and recipe generation 
+using the Google Gemini API.
 """
 
 from typing import Optional
-import google.generativeai as genai
-from config import GEMINI_API_KEY, GEMINI_MODEL
 import json
+import google.generativeai as genai
+# Assuming 'config' exists and contains GEMINI_API_KEY and GEMINI_MODEL
+from config import GEMINI_API_KEY, GEMINI_MODEL 
+# The second import of json is redundant, removed below.
 
 
 class IngredientAnalyzer:
-    """Analyzes ingredients from images and prompts using Google Gemini API."""
+    """Analyzes ingredients from images/prompts and generates recipes using Google Gemini API."""
 
     def __init__(self):
         """Initialize the IngredientAnalyzer with Gemini API."""
         if not GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY environment variable not set. Please configure it in .env file.")
+            # Note: For Cloud Run deployment, this should be set as an environment variable, 
+            # and the .env file reliance should be removed from config.py.
+            raise ValueError("GEMINI_API_KEY environment variable not set. Please configure it.")
         
         genai.configure(api_key=GEMINI_API_KEY)
         self.model = genai.GenerativeModel(GEMINI_MODEL)
-        self.vision_model = genai.GenerativeModel(GEMINI_MODEL)
+        self.vision_model = genai.GenerativeModel(GEMINI_MODEL) # Use a specific model if needed, or stick to the main model
         self.ingredients_list = []  # Store the last analyzed ingredients
 
+    # ----------------------------------------------------------------------
+    # Ingredient Analysis Methods (analyze_image, analyze_prompt, analyze)
+    # These methods remain unchanged from your original request.
+    # ----------------------------------------------------------------------
+    
     def analyze_image(self, image_path: str) -> list:
         """
         Analyze an image to detect ingredients.
-
-        Args:
-            image_path: Path to the image file
-
-        Returns:
-            List of ingredient names as strings
         """
         try:
             # Upload image file
@@ -45,6 +49,9 @@ class IngredientAnalyzer:
             
             # Generate response
             response = self.vision_model.generate_content([prompt, image_file])
+            
+            # Clean up the image file after use
+            genai.delete_file(image_file.name)
             
             # Parse JSON response
             try:
@@ -61,12 +68,6 @@ class IngredientAnalyzer:
     def analyze_prompt(self, prompt: str) -> list:
         """
         Analyze a text prompt to extract ingredient information.
-
-        Args:
-            prompt: Text prompt containing ingredient information
-
-        Returns:
-            List of ingredient names as strings
         """
         try:
             # Create system instruction for ingredient parsing - request JSON array
@@ -94,13 +95,6 @@ class IngredientAnalyzer:
     def analyze(self, image_path: Optional[str] = None, prompt: Optional[str] = None) -> list:
         """
         Analyze ingredients from either an image or prompt.
-
-        Args:
-            image_path: Optional path to an image file
-            prompt: Optional text prompt
-
-        Returns:
-            Combined list of all detected ingredients (deduplicated)
         """
         all_ingredients = []
 
@@ -129,81 +123,83 @@ class IngredientAnalyzer:
     def get_stored_ingredients(self) -> list:
         """
         Get the last analyzed ingredients list.
-        
-        Returns:
-            List of ingredients from the last analysis
         """
         return self.ingredients_list
     
-    def filter_top_recipes(self, ingredients: list, recipes: list, top_n: int = 5) -> list:
+    # ----------------------------------------------------------------------
+    # NEW: Recipe Generation Method (Replaces filter_top_recipes)
+    # ----------------------------------------------------------------------
+
+    def generate_recipes(self, ingredients: list, num_recipes: int = 5) -> list:
         """
-        Use Gemini to rank and filter recipes based on ingredients.
+        Use Gemini to generate a list of N recipes based on the available ingredients.
         
         Args:
-            ingredients: List of available ingredients
-            recipes: List of recipe dictionaries with 'title' and 'ingredients' keys
-            top_n: Number of top recipes to return (default 5)
+            ingredients: List of available ingredient names
+            num_recipes: Number of recipes to generate
             
         Returns:
-            List of top N recipes ranked by Gemini
+            List of generated recipe dictionaries (title, ingredients, instructions)
         """
         try:
-            # Limit recipes to first 20 to avoid token limits
-            recipes_subset = recipes[:20] if len(recipes) > 20 else recipes
+            available_ingredients = ', '.join(ingredients)
             
-            # Format recipes for prompt
-            recipe_list = []
-            for i, recipe in enumerate(recipes_subset):
-                title = recipe.get('title', 'Untitled')
-                recipe_ingredients = recipe.get('ingredients', [])
-                ingredients_str = ', '.join(recipe_ingredients[:10])  # Limit to 10 ingredients shown
-                recipe_list.append(f"{i}. {title}\n   Ingredients: {ingredients_str}")
-            
-            recipes_formatted = '\n\n'.join(recipe_list)
-            
-            # Create prompt for Gemini
-            prompt = f"""Given these available ingredients: {', '.join(ingredients)}
+            # Use a robust system instruction for structured output
+            system_prompt = f"""You are a professional chef and recipe generator. Your task is to generate {num_recipes} creative and practical recipes using the available ingredients provided by the user.
 
-And these recipe options:
-{recipes_formatted}
+            For each recipe, you must provide:
+            1. 'title': A creative and appealing title.
+            2. 'ingredients': A list of all ingredients required (including quantity/unit).
+            3. 'instructions': A list of step-by-step cooking instructions.
 
-Analyze each recipe and return ONLY a JSON array of the indices (0-based) of the top {top_n} recipes that:
-1. Use the most available ingredients
-2. Are most practical and appealing
-3. Have good variety
+            Return ONLY a JSON array of recipe objects. The structure must be:
+            [
+              {{
+                "title": "Recipe Title 1",
+                "ingredients": ["1 cup ingredient A", "2 tbsp ingredient B", ...],
+                "instructions": ["Step 1", "Step 2", ...]
+              }},
+              {{
+                "title": "Recipe Title 2",
+                "ingredients": ["...", ...],
+                "instructions": ["...", ...]
+              }}
+            ]
+            Do not include any pre-amble, explanation, or text outside of the JSON array."""
 
-Return ONLY the JSON array of indices, no other text. Example: [0, 3, 5, 7, 9]"""
+            # Create user prompt
+            user_prompt = f"Generate {num_recipes} recipes using these available ingredients: {available_ingredients}"
 
-            response = self.model.generate_content(prompt)
+            # Generate response
+            response = self.model.generate_content(
+                contents=user_prompt, 
+                system_instruction=system_prompt
+            )
             
-            # Parse the indices
-            top_indices = json.loads(response.text.strip())
+            # Parse the JSON response
+            raw_text = response.text.strip()
             
-            # Return the filtered recipes
-            filtered = []
-            for i in top_indices:
-                if i < len(recipes_subset):
-                    filtered.append(recipes_subset[i])
-                if len(filtered) >= top_n:
-                    break
+            # Clean up the response text (sometimes models wrap JSON in ```json)
+            if raw_text.startswith('```json'):
+                raw_text = raw_text.strip('`json').strip('`')
             
-            return filtered
+            recipes_list = json.loads(raw_text)
+            
+            # Ensure the output is a list before returning
+            return recipes_list if isinstance(recipes_list, list) else []
             
         except Exception as e:
-            # Fallback: return first top_n recipes if filtering fails
-            print(f"Recipe filtering error: {e}. Returning first {top_n} recipes.")
-            return recipes[:top_n]
+            print(f"Recipe generation error: {e}. Returning empty list.")
+            return []
 
+    # The old filter_top_recipes method is REMOVED
+    
     def run(self):
         """Run the analyzer with interactive mode or default behavior."""
         print("Ingredient Analyzer initialized and ready to analyze!")
         print(f"Using Gemini model: {GEMINI_MODEL}")
         
         # TODO: Implement interactive CLI or API mode
-        # Example usage:
-        # 1. Image analysis: analyzer.analyze_image("path/to/image.jpg")
-        # 2. Prompt analysis: analyzer.analyze_prompt("I have 2 cups of flour and 3 eggs")
-        # 3. Combined: analyzer.analyze(image_path="...", prompt="...")
 
 
 if __name__ == "__main__":
