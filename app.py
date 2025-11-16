@@ -81,15 +81,19 @@ def analyze():
 @app.route('/get_recipes', methods=['POST'])
 def get_recipes():
     """
-    Get recipes based on stored ingredients list by asking Gemini to generate them.
+    Get recipes based on provided ingredients list.
     """
     try:
-        ingredients = analyzer.get_stored_ingredients()
+        data = request.get_json()
+        ingredients = data.get('ingredients', [])
         
         if not ingredients:
-            return jsonify({"success": False, "error": "No ingredients found. Please analyze ingredients first."}), 400
+            return jsonify({
+                "success": False, 
+                "error": "No ingredients provided."
+            }), 400
         
-        print(f"Generating recipes using {len(ingredients)} ingredients...")
+        print(f"Generating recipes using {len(ingredients)} ingredients: {ingredients}")
         
         generated_recipes = analyzer.generate_recipes(ingredients, num_recipes=5)
         
@@ -103,7 +107,7 @@ def get_recipes():
     except Exception as e:
         print(f"Error in get_recipes: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
-
+    
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok"})
