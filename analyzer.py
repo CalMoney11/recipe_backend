@@ -33,38 +33,34 @@ class IngredientAnalyzer:
     # ----------------------------------------------------------------------
     
     def analyze_image(self, image_path: str) -> list:
-        """
-        Analyze an image to detect ingredients.
-        """
         try:
-            # Upload image file
             image_file = genai.upload_file(image_path)
-            
-            # Create prompt for ingredient analysis - request JSON array
             prompt = """Analyze this image and identify all visible ingredients or food items. 
             Return ONLY a JSON array of ingredient names, like this:
             ["ingredient1", "ingredient2", "ingredient3"]
             
-            Do not include any other text, explanations, or formatting. Just the JSON array of ingredient names."""
+            Do not include any other text, explanations, or formatting."""
             
-            # Generate response
             response = self.vision_model.generate_content([prompt, image_file])
-            
-            # Clean up the image file after use
             genai.delete_file(image_file.name)
             
-            # Parse JSON response
-            try:
-                ingredients_list = json.loads(response.text.strip())
-                return ingredients_list if isinstance(ingredients_list, list) else []
-            except json.JSONDecodeError:
-                # Fallback: return empty list if parsing fails
-                print(f"Warning: Could not parse JSON from image analysis. Raw response: {response.text}")
-                return []
+            raw_text = response.text.strip()
+            print(f"Raw Gemini response: {raw_text}")  # ✅ Debug logging
+            
+            # Clean markdown code blocks if present
+            if raw_text.startswith('```json'):
+                raw_text = raw_text.replace('```json', '').replace('```', '').strip()
+            
+            ingredients_list = json.loads(raw_text)
+            return ingredients_list if isinstance(ingredients_list, list) else []
+            
+        except json.JSONDecodeError as e:
+            print(f"JSON parsing error: {e}. Raw response: {raw_text}")
+            return []
         except Exception as e:
             print(f"Error analyzing image: {str(e)}")
             return []
-
+            
     def analyze_prompt(self, prompt: str) -> list:
         """
         Analyze a text prompt to extract ingredient information.
