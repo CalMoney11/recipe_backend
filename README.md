@@ -1,2 +1,1 @@
-# recipe_backend
-vercel backend flask app
+https://calmoney11.github.io/Ingredient-Analyzer/

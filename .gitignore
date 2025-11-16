@@ -1,0 +1,8 @@
+.env
+kaggle.json
+__pycache__/
+*.pyc
+.vercel
+uploads/
+data/
+*.csv
