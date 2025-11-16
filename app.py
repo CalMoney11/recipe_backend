@@ -15,25 +15,40 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Configure Flask to serve static files from the project root
+# Configure Flask
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path='')
-CORS(app)
+# 🎯 FIX 1: Explicitly configure CORS to allow all origins globally (for local dev/Cloud Run)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 analyzer = IngredientAnalyzer()
 
 
+## --- Frontend Serving Routes ---
 @app.route("/", methods=["GET"])
 def index():
     """Serve the existing `index.html` from the project root."""
     return send_from_directory(BASE_DIR, "index.html")
 
+# 🎯 FIX 2: Add a route to serve the script.js file directly
+@app.route("/script.js", methods=["GET"])
+def serve_script():
+    """Serve the script.js file from the project root."""
+    return send_from_directory(BASE_DIR, "script.js")
 
+# 🎯 FIX 3: Add a route to serve the entire images folder
+@app.route("/images/<path:filename>", methods=["GET"])
+def serve_images(filename):
+    """Serve files (like moon.png/sun.png) from the 'images' sub-directory."""
+    # Note: BASE_DIR is your project root, 'images' is the subdirectory
+    return send_from_directory(os.path.join(BASE_DIR, 'images'), filename)
+
+
+## --- API Endpoints ---
 @app.route("/analyze", methods=["POST"])
 def analyze():
     """
     Accepts multipart form-data with optional `image` file and optional `prompt` text.
-    Saves the uploaded image to `uploads/`, calls `IngredientAnalyzer.analyze`,
-    and returns the analysis result as JSON.
+    Performs ingredient analysis and returns the analysis result.
     """
     try:
         image = request.files.get("image")
@@ -46,25 +61,21 @@ def analyze():
             image_path = os.path.join(UPLOAD_DIR, unique_name)
             image.save(image_path)
 
-        # Call the analyzer (now returns a list of ingredients)
+        # Call the analyzer
         ingredients_list = analyzer.analyze(image_path=image_path, prompt=prompt)
 
-        # Remove the temporary file after analysis to avoid storage buildup
+        # Cleanup temporary file
         if image_path and os.path.exists(image_path):
             try:
                 os.remove(image_path)
             except Exception:
-                # Don't fail the request if cleanup fails
-                pass
+                pass # Fail silently on cleanup
 
         return jsonify({"success": True, "ingredients": ingredients_list})
     except Exception as e:
+        # Include detailed error logging for easier debugging
+        print(f"Error during /analyze: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
-
-
-# Note: Serving uploaded files publicly is disabled in production for security.
-# If you need to debug uploaded files locally, temporarily re-enable an endpoint
-# or check the `uploads/` directory directly on the server.
 
 
 @app.route('/get_recipes', methods=['POST'])
@@ -73,7 +84,6 @@ def get_recipes():
     Get recipes based on stored ingredients list by asking Gemini to generate them.
     """
     try:
-        # Get the stored ingredients from the analyzer
         ingredients = analyzer.get_stored_ingredients()
         
         if not ingredients:
@@ -81,14 +91,13 @@ def get_recipes():
         
         print(f"Generating recipes using {len(ingredients)} ingredients...")
         
-        # NEW: Call the Gemini generation method
         generated_recipes = analyzer.generate_recipes(ingredients, num_recipes=5)
         
         return jsonify({
             "success": True,
             "ingredients": ingredients,
             "recipes": generated_recipes,
-            "total_found": len(generated_recipes) # Report how many were generated
+            "total_found": len(generated_recipes)
         })
         
     except Exception as e:
@@ -102,4 +111,5 @@ def health():
 
 if __name__ == "__main__":
     # Run dev server: use the venv python and run `python app.py`.
-    app.run()
+    # Setting host='0.0.0.0' is useful for Docker/Cloud Run local testing
+    app.run(host='127.0.0.1', port=5000)
